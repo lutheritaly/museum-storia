@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Museo della Terra - Live Audio Guide</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .pulsing-glow {
+            box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7);
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0% { transform: scale(0.98); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
+            70% { transform: scale(1); box-shadow: 0 0 0 15px rgba(239, 68, 68, 0); }
+            100% { transform: scale(0.98); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+        }
+    </style>
+</head>
+<body class="bg-stone-900 text-stone-100 font-sans min-h-screen flex flex-col justify-between p-6">
+
+    <header class="text-center py-4 border-b border-stone-800">
+        <h1 class="text-xs uppercase tracking-widest text-stone-400">Associazione ARTimi</h1>
+        <p class="text-xl font-serif tracking-tight text-amber-500 mt-1">Museo della Terra</p>
+    </header>
+
+    <main class="flex-grow flex flex-col items-center justify-center my-8 text-center">
+        <div id="radar-status" class="w-24 h-24 rounded-full bg-stone-800 flex items-center justify-center mb-6 transition-all duration-500">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-10 w-10 text-stone-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 100-6 3 3 0 000 6z" />
+            </svg>
+        </div>
+
+        <h2 id="exhibit-title" class="text-2xl font-serif text-stone-200 duration-300">In Attesa di un Artefatto...</h2>
+        <p id="exhibit-prompt" class="text-sm text-stone-400 max-w-xs mt-2 px-4">Avvicinati a un'opera d'arte esposta per iniziare la narrazione.</p>
+        
+        <audio id="audio-player" class="hidden" controls></audio>
+    </main>
+
+    <footer class="w-full max-w-md mx-auto">
+        <button id="start-btn" onclick="initializeMuseumRadar()" class="w-full bg-amber-600 hover:bg-amber-700 text-white font-medium py-4 px-6 rounded-xl transition duration-200 shadow-lg tracking-wide uppercase text-xs">
+            Attiva Guida Vocale
+        </button>
+        <p class="text-[10px] text-center text-stone-600 mt-4 tracking-wider">SECURE ENCRYPTED LOCAL STREAM VIA LUTHER</p>
+    </footer>
+
+    <script>
+        const API_URL = "https://api-luther.scattiearte.it/api/interact";
+        let currentActiveBeacon = null;
+        const audioPlayer = document.getElementById('audio-player');
+
+        async function initializeMuseumRadar() {
+            const startBtn = document.getElementById('start-btn');
+            try {
+                // Requesting LE Bluetooth scanning interface from the phone browser
+                const scan = await navigator.bluetooth.requestLEScan({
+                    filters: [{ namePrefix: 'Shelly ' }],
+                    keepRepeatedDevices: true
+                });
+
+                startBtn.textContent = "Radar Attivo - Esplora il Museo";
+                startBtn.disabled = true;
+                startBtn.className = "w-full bg-stone-800 text-stone-500 font-medium py-4 px-6 rounded-xl cursor-not-allowed uppercase text-xs tracking-wide";
+                
+                document.getElementById('radar-status').classList.add('pulsing-glow', 'bg-red-950', 'text-red-400');
+
+                navigator.bluetooth.addEventListener('advertisementreceived', event => {
+                    const beaconId = event.device.id;
+                    const rssi = event.rssi; 
+
+                    // Premium UX: Trigger interaction if the phone is within ~1 meter of the exhibit button
+                    if (rssi > -60 && currentActiveBeacon !== beaconId) {
+                        currentActiveBeacon = beaconId;
+                        fetchAudioNarration(beaconId);
+                    }
+                });
+
+            } catch (error) {
+                console.error("Bluetooth initialization aborted:", error);
+                alert("Per favore abilita i permessi Bluetooth per usare la guida.");
+            }
+        }
+
+        async function fetchAudioNarration(beaconId) {
+            const titleEl = document.getElementById('exhibit-title');
+            const promptEl = document.getElementById('exhibit-prompt');
+            
+            titleEl.textContent = "Connessione all'Artefatto...";
+            promptEl.textContent = "Luther sta elaborando la voce narrante in tempo reale...";
+
+            try {
+                const response = await fetch(API_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        beacon_id: beaconId,
+                        user_input: "Presentati e raccontami la tua storia."
+                    })
+                });
+
+                if (!response.ok) throw new Error("Server transmission error.");
+
+                // Convert incoming streamed audio bytes into an execution URL blob
+                const audioBlob = await response.blob();
+                const audioUrl = URL.createObjectURL(audioBlob);
+                
+                // UI updates instantly to match the response
+                titleEl.textContent = "Ascolto in Corso...";
+                promptEl.textContent = "L'artefatto sta parlando direttamente sul tuo dispositivo.";
+                
+                audioPlayer.src = audioUrl;
+                audioPlayer.play();
+
+                audioPlayer.onended = () => {
+                    titleEl.textContet = "Artefatto Sintonizzato";
+                    promptEl.textContent = "Rimani vicino all'oggetto per interagire ancora o spostati per ascoltarne un altro.";
+                };
+
+            } catch (err) {
+                console.error("Pipeline breakdown:", err);
+                titleEl.textContent = "Errore di Sintonizzazione";
+                promptEl.textContent = "Impossibile collegarsi a Luther. Riprova.";
+                currentActiveBeacon = null;
+            }
+        }
+    </script>
+</body>
+</html>

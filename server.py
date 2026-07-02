@@ -10,7 +10,16 @@ import ollama
 from kokoro import KPipeline
 import soundfile as sf
 
-app = FastAPI(title="Museo della Terra AI Core")
+app = FastAPI(redirect_slashes=False)
+from fastapi.middleware.cors import CORSMiddleware
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allows any website (like Netlify) to talk to Luther
+    allow_credentials=True,
+    allow_methods=["*"],  # Allows POST, OPTIONS, GET, everything
+    allow_headers=["*"],  # Allows all custom browser headers
+)
 
 # Enable CORS so the phone browser at museo.scattiearte.it can securely talk to Luther
 app.add_middleware(
@@ -81,20 +90,52 @@ async def audio_stream_generator(system_prompt: str, user_message: str):
         print(f"Streaming pipeline failure: {e}")
         yield b""
 
+from fastapi.responses import FileResponse
+import os
+
 @app.post("/api/interact")
+@app.post("/api/interact/")
 async def interact(interaction: TourInteraction):
     # Find the corresponding artifact asset mapped to the hardware beacon ID
     artifact = get_artifact_by_beacon(interaction.beacon_id)
     if not artifact:
         raise HTTPException(status_code=404, detail="Beacon assignment missing from registry.")
 
-    # Return a continuous streaming response back through the Cloudflare tunnel
-    return StreamingResponse(
-        audio_stream_generator(artifact["system_prompt"], interaction.user_input),
-        media_type="audio/wav"
-    )
+    try:
+        # 1. Ask Ollama for the complete response at once (no streaming lag)
+        response = ollama.chat(
+            model='llama3.2:3b',
+            messages=[
+                {'role': 'system', 'content': artifact["system_prompt"]},
+                {'role': 'user', 'content': interaction.user_input}
+            ]
+        )
+        full_text = response['message']['content']
+        print(f"\n[Llama 3.2]: {full_text}")
+
+        # 2. Synthesize the text into a single audio chunk using Kokoro
+        generator = tts_pipeline(full_text, voice='af_bella', speed=1.0)
+        
+        # Combine all audio fragments into one single array
+        all_audio = []
+        for _, _, audio in generator:
+            all_audio.append(audio)
+            
+        import numpy as np
+        combined_audio = np.concatenate(all_audio)
+
+        # 3. Save the file locally on Luther temporarily
+        output_filename = "temp_output.wav"
+        sf.write(output_filename, combined_audio, 24000, format='WAV')
+
+        # 4. Hand the complete file back to the phone cleanly
+        return FileResponse(output_filename, media_type="audio/wav")
+
+    except Exception as e:
+        print(f"Pipeline failure: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     import uvicorn
     # Fire up the ASGI server locally on port 8000
-    uvicorn.run("server:app", host="127.0.0.1", port=8000, reload=False)
+    uvicorn.run("server:app", host="0.0.0.0", port=8000, reload=False)

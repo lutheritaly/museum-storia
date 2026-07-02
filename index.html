@@ -50,14 +50,34 @@
         const audioPlayer = document.getElementById('audio-player');
 
         async function initializeMuseumRadar() {
-            const startBtn = document.getElementById('start-btn');
-            try {
-                // Requesting LE Bluetooth scanning interface from the phone browser
-                const scan = await navigator.bluetooth.requestLEScan({
-                    filters: [{ namePrefix: 'Shelly ' }],
-                    keepRepeatedDevices: true
-                });
+    const startBtn = document.getElementById('start-btn');
+    try {
+        console.log("Bypassing Bluetooth for direct network test...");
+        
+        // Temporarily commented out the broken Bluetooth scanning
+        /*
+        const scan = await navigator.bluetooth.requestLEScan({
+            filters: [{ namePrefix: 'Shelly ' }],
+            keepRepeatedDevices: true
+        });
+        */
 
+        // FORCE A TEST CALL TO LUTHER INSTANTLY WHEN THE BUTTON IS CLICKED
+        // We'll simulate finding artifact_001 (e.g., U Criettu)
+        console.log("Sending test request to Luther via tunnel:", API_URL);
+        
+        // This hits your FastAPI backend route for testing
+        const response = await fetch(`${API_URL}/`); 
+        const data = await response.json();
+        console.log("Luther responded with:", data);
+        
+        alert("Connected to Luther! Server says: " + JSON.stringify(data));
+
+    } catch (error) {
+        console.error("Test failed:", error);
+        alert("Error connecting: " + error.message);
+    }
+}
                 startBtn.textContent = "Radar Attivo - Esplora il Museo";
                 startBtn.disabled = true;
                 startBtn.className = "w-full bg-stone-800 text-stone-500 font-medium py-4 px-6 rounded-xl cursor-not-allowed uppercase text-xs tracking-wide";

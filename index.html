@@ -54,25 +54,20 @@
     async function initializeMuseumRadar() {
         const startBtn = document.getElementById('start-btn');
         try {
-            console.log("Bypassing Bluetooth for direct network test...");
+            console.log("Bypassing Bluetooth and triggering a simulated artifact encounter...");
             
-            // 1. Update the UI exactly like your original design did
+            // UI updates
             startBtn.textContent = "Radar Attivo - Esplora il Museo";
             startBtn.disabled = true;
             startBtn.className = "w-full bg-stone-800 text-stone-500 font-medium py-4 px-6 rounded-xl cursor-not-allowed uppercase text-xs tracking-wide";
             document.getElementById('radar-status').classList.add('pulsing-glow', 'bg-red-950', 'text-red-400');
 
-            // 2. Fire a direct test call through the tunnel to Luther
-            console.log("Sending test request to Luther via tunnel:", API_URL);
-            const response = await fetch(`${API_URL}/`); 
-            const data = await response.json();
-            console.log("Luther responded with:", data);
-            
-            alert("Connected to Luther! Server says: " + JSON.stringify(data));
+            // SIMULATE A BEACON HIT: Pass a test ID to your actual audio generation function below
+            // Swap 'test_beacon_001' with an actual beacon ID your python backend recognizes if you have one!
+            fetchAudioNarration('test_beacon_001');
 
         } catch (error) {
-            console.error("Connection failed:", error);
-            alert("Error connecting to Luther: " + error.message);
+            console.error("Simulation failed:", error);
         }
     }
 

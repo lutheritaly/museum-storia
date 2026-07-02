@@ -50,16 +50,21 @@
         const audioPlayer = document.getElementById('audio-player');
 
         async function initializeMuseumRadar() {
-    const startBtn = document.getElementById('start-btn');
     try {
         console.log("Bypassing Bluetooth for direct network test...");
         
-        // Temporarily commented out the broken Bluetooth scanning
-        /*
-        const scan = await navigator.bluetooth.requestLEScan({
-            filters: [{ namePrefix: 'Shelly ' }],
-            keepRepeatedDevices: true
-        });
+        // Let's test the network tunnel by pinging Luther's root route
+        const response = await fetch(`${API_URL}/`); 
+        const data = await response.json();
+        
+        console.log("Luther responded with:", data);
+        alert("Connected to Luther! Server says: " + JSON.stringify(data));
+
+    } catch (error) {
+        console.error("Test failed:", error);
+        alert("Error connecting to Luther: " + error.message);
+    }
+});
         */
 
         // FORCE A TEST CALL TO LUTHER INSTANTLY WHEN THE BUTTON IS CLICKED

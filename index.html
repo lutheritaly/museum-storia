@@ -45,68 +45,39 @@
     </footer>
 
     <script>
-        const API_URL = "https://petite-showers-agree.loca.lt";
-        let currentActiveBeacon = null;
-        const audioPlayer = document.getElementById('audio-player');
+    // The secure tunnel address pointing to Luther
+    const API_URL = "https://petite-showers-agree.loca.lt"; 
+    let currentActiveBeacon = null;
+    const audioPlayer = new Audio(); // Ensures your player is globally available
 
-        async function initializeMuseumRadar() {
-    try {
-        console.log("Bypassing Bluetooth for direct network test...");
-        
-        // Let's test the network tunnel by pinging Luther's root route
-        const response = await fetch(`${API_URL}/`); 
-        const data = await response.json();
-        
-        console.log("Luther responded with:", data);
-        alert("Connected to Luther! Server says: " + JSON.stringify(data));
+    // Cleaned up function: Bypasses Bluetooth and tests the network tunnel directly
+    async function initializeMuseumRadar() {
+        const startBtn = document.getElementById('start-btn');
+        try {
+            console.log("Bypassing Bluetooth for direct network test...");
+            
+            // 1. Update the UI exactly like your original design did
+            startBtn.textContent = "Radar Attivo - Esplora il Museo";
+            startBtn.disabled = true;
+            startBtn.className = "w-full bg-stone-800 text-stone-500 font-medium py-4 px-6 rounded-xl cursor-not-allowed uppercase text-xs tracking-wide";
+            document.getElementById('radar-status').classList.add('pulsing-glow', 'bg-red-950', 'text-red-400');
 
-    } catch (error) {
-        console.error("Test failed:", error);
-        alert("Error connecting to Luther: " + error.message);
-    }
-});
-        */
+            // 2. Fire a direct test call through the tunnel to Luther
+            console.log("Sending test request to Luther via tunnel:", API_URL);
+            const response = await fetch(`${API_URL}/`); 
+            const data = await response.json();
+            console.log("Luther responded with:", data);
+            
+            alert("Connected to Luther! Server says: " + JSON.stringify(data));
 
-        // FORCE A TEST CALL TO LUTHER INSTANTLY WHEN THE BUTTON IS CLICKED
-        // We'll simulate finding artifact_001 (e.g., U Criettu)
-        console.log("Sending test request to Luther via tunnel:", API_URL);
-        
-        // This hits your FastAPI backend route for testing
-        const response = await fetch(`${API_URL}/`); 
-        const data = await response.json();
-        console.log("Luther responded with:", data);
-        
-        alert("Connected to Luther! Server says: " + JSON.stringify(data));
-
-    } catch (error) {
-        console.error("Test failed:", error);
-        alert("Error connecting: " + error.message);
-    }
-}
-                startBtn.textContent = "Radar Attivo - Esplora il Museo";
-                startBtn.disabled = true;
-                startBtn.className = "w-full bg-stone-800 text-stone-500 font-medium py-4 px-6 rounded-xl cursor-not-allowed uppercase text-xs tracking-wide";
-                
-                document.getElementById('radar-status').classList.add('pulsing-glow', 'bg-red-950', 'text-red-400');
-
-                navigator.bluetooth.addEventListener('advertisementreceived', event => {
-                    const beaconId = event.device.id;
-                    const rssi = event.rssi; 
-
-                    // Premium UX: Trigger interaction if the phone is within ~1 meter of the exhibit button
-                    if (rssi > -60 && currentActiveBeacon !== beaconId) {
-                        currentActiveBeacon = beaconId;
-                        fetchAudioNarration(beaconId);
-                    }
-                });
-
-            } catch (error) {
-                console.error("Bluetooth initialization aborted:", error);
-                alert("Per favore abilita i permessi Bluetooth per usare la guida.");
-            }
+        } catch (error) {
+            console.error("Connection failed:", error);
+            alert("Error connecting to Luther: " + error.message);
         }
+    }
 
-        async function fetchAudioNarration(beaconId) {
+    // Your original audio narration function remains untouched below...
+    async function fetchAudioNarration(beaconId) {
             const titleEl = document.getElementById('exhibit-title');
             const promptEl = document.getElementById('exhibit-prompt');
             

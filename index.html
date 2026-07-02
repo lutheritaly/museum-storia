@@ -80,7 +80,7 @@
             promptEl.textContent = "Luther sta elaborando la voce narrante in tempo reale...";
 
             try {
-                const response = await fetch(API_URL, {
+                const response = await fetch(`${API_URL}/api/interact`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({

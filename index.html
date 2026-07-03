@@ -91,59 +91,42 @@
 
         if (!response.ok) throw new Error("Server transmission error.");
 
-        // Initialize the browser's hidden hardware audio mixer context
-        const AudioContext = window.AudioContext || window.webkitAudioContext;
-        const audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 22050 });
-        let startTime = audioCtx.currentTime;
+        // Ensure your base context uses the browser's default native hardware rate (don't force 22050 here)
+const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 
-        titleEl.textContent = "Ascolto in Corso...";
-        promptEl.textContent = "L'artefatto sta parlando direttamente sul tuo dispositivo.";
+let nextStartTime = audioCtx.currentTime;
 
-        const reader = response.body.getReader();
-        let leftoverBytes = new Uint8Array(0);
-
-        while (true) {
-            const { value, done } = await reader.read();
-            if (done) break;
-
-            // Combine any leftover bytes from the last chunk with the incoming data payload
-            const combinedBytes = new Uint8Array(leftoverBytes.length + value.length);
-            combinedBytes.set(leftoverBytes);
-            combinedBytes.set(value, leftoverBytes.length);
-
-            // 16-bit PCM means every single audio sample is exactly 2 bytes long
-            const validLength = Math.floor(combinedBytes.length / 2) * 2;
-            const pcmData = new Uint8Array(combinedBytes.buffer, 0, validLength);
-            leftoverBytes = new Uint8Array(combinedBytes.buffer, validLength);
-
-            if (pcmData.length > 0) {
-                const sampleCount = pcmData.length / 2;
-                const float32Array = new Float32Array(sampleCount);
-                const dataView = new DataView(pcmData.buffer, pcmData.byteOffset, pcmData.byteLength);
-
-                // Convert 16-bit integers back into float values (-1.0 to 1.0) for the phone's speakers
-                for (let i = 0; i < sampleCount; i++) {
-                    const int16Sample = dataView.getInt16(i * 2, true); // true = little-endian
-                    float32Array[i] = int16Sample / 32768.0;
-                }
-
-                // Create an execution buffer inside the mobile device memory
-                const audioBuffer = audioCtx.createBuffer(1, sampleCount, 24000);
-                audioBuffer.getChannelData(0).set(float32Array);
-
-                // Schedule this micro-chunk to play immediately following the previous chunk
-                const bufferSource = audioCtx.createBufferSource();
-                bufferSource.buffer = audioBuffer;
-                bufferSource.connect(audioCtx.destination);
-                
-                // If the engine fell behind, lock the start time to the current clock tracking loop
-                if (startTime < audioCtx.currentTime) {
-                    startTime = audioCtx.currentTime;
-                }
-                
-                bufferSource.start(startTime);
-                startTime += audioBuffer.duration; // Line up the next chunk precisely at the tail end
-            }
+// ... inside your stream reader loop where you receive the raw bytes ...
+function playPCMChunk(rawBytes) {
+    // Convert the raw 16-bit PCM bytes into Float32 numbers the browser requires
+    const int16Array = new Int16Array(rawBytes.buffer);
+    
+    // Create an audio buffer specifying EXACTLY 1 channel, the chunk length, 
+    // and telling the browser: "Hey, this data was born at 22050 Hz!"
+    // The browser will automatically resample it to 44100/48000 on the fly cleanly.
+    const audioBuffer = audioCtx.createBuffer(1, int16Array.length, 22050);
+    const channelData = audioBuffer.getChannelData(0);
+    
+    // Normalize the 16-bit integers into the -1.0 to 1.0 float range
+    for (let i = 0; i < int16Array.length; i++) {
+        channelData[i] = int16Array[i] / 32768.0;
+    }
+    
+    // Schedule it precisely in the timeline sequence
+    const source = audioCtx.createBufferSource();
+    source.buffer = audioBuffer;
+    source.connect(audioCtx.destination);
+    
+    // Prevent overlapping or gaps by locking the start time to the real duration
+    if (nextStartTime < audioCtx.currentTime) {
+        nextStartTime = audioCtx.currentTime;
+    }
+    
+    source.start(nextStartTime);
+    
+    // Duration is: total samples / 22050 Hz recording speed
+    nextStartTime += audioBuffer.duration;
+}
         }
 
         // Reset the UI headings once the stream reader closes cleanly

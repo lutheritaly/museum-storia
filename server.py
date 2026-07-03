@@ -76,16 +76,16 @@ async def interact(interaction: TourInteraction):
                     for raw_sentence in clauses_to_process:
                         clean_sentence = raw_sentence.strip()
                         if len(clean_sentence) > 2:
-                            # FIXED: Explicitly slowing down the speech delivery (1.25 = 25% slower/more deliberate)
-                            for audio_chunk in voice.synthesize(clean_sentence, length_scale=1.25):
+                            # Cleaned: Removed length_scale to stop the crash
+                            for audio_chunk in voice.synthesize(clean_sentence):
                                 yield audio_chunk.audio_int16_bytes
                             await asyncio.sleep(0.001)
 
             if text_buffer.strip():
                 clean_sentence = text_buffer.strip()
                 if len(clean_sentence) > 2:
-                    # FIXED: Same adjustment for the trailing clause
-                    for audio_chunk in voice.synthesize(clean_sentence, length_scale=1.25):
+                    # Cleaned: Removed length_scale here too
+                    for audio_chunk in voice.synthesize(clean_sentence):
                         yield audio_chunk.audio_int16_bytes
                     await asyncio.sleep(0.001)
 

@@ -93,7 +93,7 @@
 
         // Initialize the browser's hidden hardware audio mixer context
         const AudioContext = window.AudioContext || window.webkitAudioContext;
-        const audioCtx = new AudioContext({ sampleRate: 24000 });
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 22050 });
         let startTime = audioCtx.currentTime;
 
         titleEl.textContent = "Ascolto in Corso...";

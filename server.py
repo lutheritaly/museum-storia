@@ -42,9 +42,14 @@ voice = PiperVoice.load(MODEL_PATH)
 print("[System Core]: Piper engine successfully initialized.")
 
 @app.post("/api/interact")
+@app.get("/api/interact")  # ADDED: Allows the HTML5 audio deck to fetch the file directly
 @app.post("/api/interact/")
-async def interact(interaction: TourInteraction):
-    artifact = REGISTRY.get(interaction.beacon_id)
+async def interact(interaction: TourInteraction = None, beacon_id: str = None, user_input: str = None):
+    # Map incoming GET query parameters if POST payload isn't used
+    b_id = beacon_id if beacon_id else (interaction.beacon_id if interaction else "PENDING_SHELLY_ID_1")
+    u_in = user_input if user_input else (interaction.user_input if interaction else "Presentati.")
+    
+    artifact = REGISTRY.get(b_id)
     if not artifact:
         raise HTTPException(status_code=404, detail="Beacon assignment missing from registry.")
 

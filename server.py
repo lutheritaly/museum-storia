@@ -1,6 +1,7 @@
 import os
 import re
 import asyncio
+import struct
 import numpy as np
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -43,16 +44,38 @@ voice = PiperVoice.load(MODEL_PATH)
 print("[System Core]: Piper engine successfully initialized.")
 
 def resample_22050_to_44100(raw_pcm_bytes):
-    """Upscales raw 22050Hz Int16 audio to standard 44100Hz so mobile phones don't chipmunk it."""
+    """Upscales raw 22050Hz Int16 audio to standard 44100Hz."""
     audio_data = np.frombuffer(raw_pcm_bytes, dtype=np.int16)
-    # Double the number of samples using linear interpolation
     num_samples = len(audio_data)
     resampled_data = np.interp(
         np.linspace(0, num_samples, num_samples * 2, endpoint=False),
-         Republic = np.arange(num_samples),
+        np.arange(num_samples),
         audio_data
     ).astype(np.int16)
-    return resampled_data.tobytes()
+    return resampled_data
+
+def create_wav_chunk(pcm_data_16bit, sample_rate=44100):
+    """Wraps raw 16-bit PCM numpy arrays inside a standard browser-readable WAV container."""
+    raw_bytes = pcm_data_16bit.tobytes()
+    num_bytes = len(raw_bytes)
+    
+    # 44-byte RIFF/WAV standard header structure
+    header = struct.pack('<4sI4s4sIHHIIHH4sI',
+        b'RIFF',
+        num_bytes + 36,  # Total file chunk size minus 8 bytes
+        b'WAVE',
+        b'fmt ',
+        16,              # Subchunk1Size (16 for PCM)
+        1,               # AudioFormat (1 for uncompressed PCM)
+        1,               # NumChannels (1 for Mono)
+        sample_rate,     # SampleRate
+        sample_rate * 2, # ByteRate (SampleRate * NumChannels * BitsPerSample/8)
+        2,               # BlockAlign (NumChannels * BitsPerSample/8)
+        16,              # BitsPerSample
+        b'data',
+        num_bytes        # Subchunk2Size
+    )
+    return header + raw_bytes
 
 @app.post("/api/interact")
 @app.post("/api/interact/")
@@ -80,29 +103,26 @@ async def interact(interaction: TourInteraction):
                 
                 text_buffer += text_token
                 
-                # Split cleanly when phrases hit a pause boundary
                 if any(pause in text_token for pause in [",", ";", ".", "!", "?", "\n"]):
                     clauses = re.split(r'(?<=[,;.!?\n])\s+', text_buffer)
                     
-                    # If we have completed clauses, process them and clear them out completely!
                     if len(clauses) > 1:
                         clauses_to_process = clauses[:-1]
-                        text_buffer = clauses[-1] # Keep only the unfinished trailing bit
+                        text_buffer = clauses[-1]
 
                         for raw_clause in clauses_to_process:
                             clean_clause = raw_clause.strip()
                             if len(clean_clause) > 2:
-                                # Accumulate native chunks
                                 clause_pcm = b""
                                 for audio_chunk in voice.synthesize(clean_clause):
                                     clause_pcm += audio_chunk.audio_int16_bytes
                                 
                                 if clause_pcm:
-                                    # Resample up to 44.1kHz standard before sending to phone
-                                    yield resample_22050_to_44100(clause_pcm)
+                                    # Upscale to 44.1k and wrap inside an explicit WAV wrapper
+                                    resampled_np = resample_22050_to_44100(clause_pcm)
+                                    yield create_wav_chunk(resampled_np, sample_rate=44100)
                                 await asyncio.sleep(0.001)
 
-            # Process any leftover text remaining at the very end
             if text_buffer.strip():
                 clean_clause = text_buffer.strip()
                 if len(clean_clause) > 2:
@@ -110,14 +130,16 @@ async def interact(interaction: TourInteraction):
                     for audio_chunk in voice.synthesize(clean_clause):
                         clause_pcm += audio_chunk.audio_int16_bytes
                     if clause_pcm:
-                        yield resample_22050_to_44100(clause_pcm)
+                        resampled_np = resample_22050_to_44100(clause_pcm)
+                        yield create_wav_chunk(resampled_np, sample_rate=44100)
                     await asyncio.sleep(0.001)
 
         except Exception as e:
             print(f"\n[System Core Pipeline Failure]: {e}")
             yield b""
 
-    return StreamingResponse(audio_stream_generator(), media_type="application/octet-stream")
+    # Swapped media_type to audio/wav so the phone knows exactly what container format is landing
+    return StreamingResponse(audio_stream_generator(), media_type="audio/wav")
 
 if __name__ == "__main__":
     import uvicorn

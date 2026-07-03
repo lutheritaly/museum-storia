@@ -94,34 +94,40 @@
             promptEl.textContent = "Il Torchio Vinario sta parlando...";
 
             const reader = response.body.getReader();
-            nextStartTime = audioCtx.currentTime; // Reset timeline sync anchor
+            
+            // Standard HTML5 Audio elements handle sequential WAV blobs flawlessly
+            let audioQueue = [];
+            let isPlaying = false;
+
+            function playNextInQueue() {
+                if (audioQueue.length === 0) {
+                    isPlaying = false;
+                    return;
+                }
+                isPlaying = true;
+                const blobData = audioQueue.shift();
+                const blobUrl = URL.createObjectURL(blobData);
+                const chunkPlayer = new Audio(blobUrl);
+                
+                chunkPlayer.onended = () => {
+                    URL.revokeObjectURL(blobUrl); // Clean up memory
+                    playNextInQueue();
+                };
+                chunkPlayer.play().catch(err => console.error("Playback block:", err));
+            }
 
             while (true) {
                 const { done, value } = await reader.read();
                 if (done) break;
 
                 if (value && value.byteLength > 0) {
-                    // Correct structural parsing of raw 16-bit PCM bytes
-                    const int16Array = new Int16Array(value.buffer, value.byteOffset, value.byteLength / 2);
+                    // Wrap the incoming chunks directly into an explicit WAV blob
+                    const wavBlob = new Blob([value], { type: 'audio/wav' });
+                    audioQueue.push(wavBlob);
                     
-                    // Force browser mixer to handle the translation from native 22050Hz upward
-                    const audioBuffer = audioCtx.createBuffer(1, int16Array.length, 44100);
-                    const channelData = audioBuffer.getChannelData(0);
-                    
-                    for (let i = 0; i < int16Array.length; i++) {
-                        channelData[i] = int16Array[i] / 32768.0;
+                    if (!isPlaying) {
+                        playNextInQueue();
                     }
-                    
-                    const source = audioCtx.createBufferSource();
-                    source.buffer = audioBuffer;
-                    source.connect(audioCtx.destination);
-                    
-                    if (nextStartTime < audioCtx.currentTime) {
-                        nextStartTime = audioCtx.currentTime;
-                    }
-                    
-                    source.start(nextStartTime);
-                    nextStartTime += audioBuffer.duration;
                 }
             }
 

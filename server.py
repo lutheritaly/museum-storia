@@ -1,16 +1,14 @@
 import os
 import re
-import asyncio
-import struct
-import numpy as np
+import tempfile
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 import ollama
 from piper.voice import PiperVoice
 
-app = FastAPI(title="Museo della Terra - Voice Core")
+app = FastAPI(title="Museo della Terra - Unified Voice Core")
 
 app.add_middleware(
     CORSMiddleware,
@@ -43,40 +41,6 @@ print("[System Core]: Loading local Piper voice engine...")
 voice = PiperVoice.load(MODEL_PATH)
 print("[System Core]: Piper engine successfully initialized.")
 
-def resample_22050_to_44100(raw_pcm_bytes):
-    """Upscales raw 22050Hz Int16 audio to standard 44100Hz."""
-    audio_data = np.frombuffer(raw_pcm_bytes, dtype=np.int16)
-    num_samples = len(audio_data)
-    resampled_data = np.interp(
-        np.linspace(0, num_samples, num_samples * 2, endpoint=False),
-        np.arange(num_samples),
-        audio_data
-    ).astype(np.int16)
-    return resampled_data
-
-def create_wav_chunk(pcm_data_16bit, sample_rate=44100):
-    """Wraps raw 16-bit PCM numpy arrays inside a standard browser-readable WAV container."""
-    raw_bytes = pcm_data_16bit.tobytes()
-    num_bytes = len(raw_bytes)
-    
-    # 44-byte RIFF/WAV standard header structure
-    header = struct.pack('<4sI4s4sIHHIIHH4sI',
-        b'RIFF',
-        num_bytes + 36,  # Total file chunk size minus 8 bytes
-        b'WAVE',
-        b'fmt ',
-        16,              # Subchunk1Size (16 for PCM)
-        1,               # AudioFormat (1 for uncompressed PCM)
-        1,               # NumChannels (1 for Mono)
-        sample_rate,     # SampleRate
-        sample_rate * 2, # ByteRate (SampleRate * NumChannels * BitsPerSample/8)
-        2,               # BlockAlign (NumChannels * BitsPerSample/8)
-        16,              # BitsPerSample
-        b'data',
-        num_bytes        # Subchunk2Size
-    )
-    return header + raw_bytes
-
 @app.post("/api/interact")
 @app.post("/api/interact/")
 async def interact(interaction: TourInteraction):
@@ -84,62 +48,46 @@ async def interact(interaction: TourInteraction):
     if not artifact:
         raise HTTPException(status_code=404, detail="Beacon assignment missing from registry.")
 
-    async def audio_stream_generator():
-        try:
-            response_stream = ollama.chat(
-                model='smollm2:360m',
-                messages=[
-                    {'role': 'system', 'content': artifact["system_prompt"]},
-                    {'role': 'user', 'content': interaction.user_input}
-                ],
-                stream=True
-            )
+    try:
+        print(f"\n[User Question]: {interaction.user_input}")
+        
+        # 1. Generate the COMPLETE text answer using our lightweight sprinter
+        response = ollama.chat(
+            model='smollm2:360m',
+            messages=[
+                {'role': 'system', 'content': artifact["system_prompt"]},
+                {'role': 'user', 'content': interaction.user_input}
+            ]
+        )
+        full_text = response['message']['content'].strip()
+        print(f"[Luther Response]: {full_text}")
 
-            text_buffer = ""
+        if not full_text:
+            raise ValueError("Ollama returned an empty response.")
+
+        # 2. Create a temporary WAV file on Luther's drive
+        temp_wav = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
+        temp_wav_path = temp_wav.name
+        temp_wav.close()
+
+        # 3. Render the entire text block to the file using Piper's native container output
+        with open(temp_wav_path, "wb") as wav_file:
+            voice.synthesize(full_text, wav_file)
             
-            for chunk in response_stream:
-                text_token = chunk['message']['content']
-                print(text_token, end="", flush=True)
-                
-                text_buffer += text_token
-                
-                if any(pause in text_token for pause in [",", ";", ".", "!", "?", "\n"]):
-                    clauses = re.split(r'(?<=[,;.!?\n])\s+', text_buffer)
-                    
-                    if len(clauses) > 1:
-                        clauses_to_process = clauses[:-1]
-                        text_buffer = clauses[-1]
+        print(f"[System Core]: Audio rendering complete. Serving file.")
 
-                        for raw_clause in clauses_to_process:
-                            clean_clause = raw_clause.strip()
-                            if len(clean_clause) > 2:
-                                clause_pcm = b""
-                                for audio_chunk in voice.synthesize(clean_clause):
-                                    clause_pcm += audio_chunk.audio_int16_bytes
-                                
-                                if clause_pcm:
-                                    # Upscale to 44.1k and wrap inside an explicit WAV wrapper
-                                    resampled_np = resample_22050_to_44100(clause_pcm)
-                                    yield create_wav_chunk(resampled_np, sample_rate=44100)
-                                await asyncio.sleep(0.001)
+        # 4. Ship the perfect WAV file back to the phone. 
+        # FileResponse handles content-length, headers, and media-types natively.
+        return FileResponse(
+            path=temp_wav_path, 
+            media_type="audio/wav", 
+            filename="response.wav",
+            background=None # File remains intact until shipped
+        )
 
-            if text_buffer.strip():
-                clean_clause = text_buffer.strip()
-                if len(clean_clause) > 2:
-                    clause_pcm = b""
-                    for audio_chunk in voice.synthesize(clean_clause):
-                        clause_pcm += audio_chunk.audio_int16_bytes
-                    if clause_pcm:
-                        resampled_np = resample_22050_to_44100(clause_pcm)
-                        yield create_wav_chunk(resampled_np, sample_rate=44100)
-                    await asyncio.sleep(0.001)
-
-        except Exception as e:
-            print(f"\n[System Core Pipeline Failure]: {e}")
-            yield b""
-
-    # Swapped media_type to audio/wav so the phone knows exactly what container format is landing
-    return StreamingResponse(audio_stream_generator(), media_type="audio/wav")
+    except Exception as e:
+        print(f"[System Core Failure]: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     import uvicorn

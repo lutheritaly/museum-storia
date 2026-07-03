@@ -73,47 +73,78 @@
 
     // Your original audio narration function remains untouched below...
     async function fetchAudioNarration(beaconId) {
-            const titleEl = document.getElementById('exhibit-title');
-            const promptEl = document.getElementById('exhibit-prompt');
-            
-            titleEl.textContent = "Connessione all'Artefatto...";
-            promptEl.textContent = "Luther sta elaborando la voce narrante in tempo reale...";
+    const titleEl = document.getElementById('exhibit-title');
+    const promptEl = document.getElementById('exhibit-prompt');
+    
+    titleEl.textContent = "Connessione all'Artefatto...";
+    promptEl.textContent = "Luther sta elaborando la voce narrante in tempo reale...";
 
-            try {
-                const response = await fetch(`${API_URL}/api/interact`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        beacon_id: "PENDING_SHELLY_ID_1",
-                        user_input: "Presentati e raccontami la tua storia."
-                    })
-                });
+    try {
+        const response = await fetch(`${API_URL}/api/interact`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                beacon_id: "PENDING_SHELLY_ID_1",
+                user_input: "Presentati e raccontami la tua storia."
+            })
+        });
 
-                if (!response.ok) throw new Error("Server transmission error.");
+        if (!response.ok) throw new Error("Server transmission error.");
 
-                // Convert incoming streamed audio bytes into an execution URL blob
-                const audioBlob = await response.blob();
-                const audioUrl = URL.createObjectURL(audioBlob);
+        // Instead of waiting for a blob, open a live reader for the incoming chunks
+        const reader = response.body.getReader();
+        const audioChunks = [];
+        
+        titleEl.textContent = "Ascolto in Corso...";
+        promptEl.textContent = "L'artefatto sta parlando direttamente sul tuo dispositivo.";
+
+        // Read the stream sequentially
+        let done = false;
+        while (!done) {
+            const { value, done: readerDone } = await reader.read();
+            if (value) {
+                audioChunks.push(value);
                 
-                // UI updates instantly to match the response
-                titleEl.textContent = "Ascolto in Corso...";
-                promptEl.textContent = "L'artefatto sta parlando direttamente sul tuo dispositivo.";
-                
-                audioPlayer.src = audioUrl;
-                audioPlayer.play();
-
-                audioPlayer.onended = () => {
-                    titleEl.textContet = "Artefatto Sintonizzato";
-                    promptEl.textContent = "Rimani vicino all'oggetto per interagire ancora o spostati per ascoltarne un altro.";
-                };
-
-            } catch (err) {
-                console.error("Pipeline breakdown:", err);
-                titleEl.textContent = "Errore di Sintonizzazione";
-                promptEl.textContent = "Impossibile collegarsi a Luther. Riprova.";
-                currentActiveBeacon = null;
+                // As soon as we get our initial sentence chunks, assemble them so the user can start listening immediately
+                if (audioChunks.length === 1 || audioChunks.length % 3 === 0) {
+                    const tempBlob = new Blob(audioChunks, { type: 'audio/wav' });
+                    const currentPlayTime = audioPlayer.currentTime;
+                    const isPlaying = !audioPlayer.paused;
+                    
+                    audioPlayer.src = URL.createObjectURL(tempBlob);
+                    
+                    if (isPlaying) {
+                        audioPlayer.currentTime = currentPlayTime;
+                        audioPlayer.play();
+                    } else if (audioChunks.length === 1) {
+                        audioPlayer.play();
+                    }
+                }
             }
+            done = readerDone;
         }
+
+        // Final assembly of the complete narration
+        const finalBlob = new Blob(audioChunks, { type: 'audio/wav' });
+        const finalUrl = URL.createObjectURL(finalBlob);
+        const savedTime = audioPlayer.currentTime;
+        
+        audioPlayer.src = finalUrl;
+        audioPlayer.currentTime = savedTime;
+        if (!audioPlayer.ended) audioPlayer.play();
+
+        audioPlayer.onended = () => {
+            titleEl.textContent = "Artefatto Sintonizzato";
+            promptEl.textContent = "Rimani vicino all'oggetto per interagire ancora o spostati per ascoltarne un altro.";
+        };
+
+    } catch (err) {
+        console.error("Pipeline breakdown:", err);
+        titleEl.textContent = "Errore di Sintonizzazione";
+        promptEl.textContent = "Impossibile collegarsi a Luther. Riprova.";
+        currentActiveBeacon = null;
+    }
+}
     </script>
 </body>
 </html>

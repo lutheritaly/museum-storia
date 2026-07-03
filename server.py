@@ -93,47 +93,83 @@ async def audio_stream_generator(system_prompt: str, user_message: str):
 from fastapi.responses import FileResponse
 import os
 
+from fastapi.responses import StreamingResponse
+import re
+
+from fastapi.responses import StreamingResponse
+import re
+import numpy as np
+
+from fastapi.responses import StreamingResponse
+import re
+import numpy as np
+import io
+import soundfile as sf
+
 @app.post("/api/interact")
 @app.post("/api/interact/")
 async def interact(interaction: TourInteraction):
-    # Find the corresponding artifact asset mapped to the hardware beacon ID
     artifact = get_artifact_by_beacon(interaction.beacon_id)
     if not artifact:
         raise HTTPException(status_code=404, detail="Beacon assignment missing from registry.")
 
-    try:
-        # 1. Ask Ollama for the complete response at once (no streaming lag)
-        response = ollama.chat(
-            model='llama3.2:3b',
-            messages=[
-                {'role': 'system', 'content': artifact["system_prompt"]},
-                {'role': 'user', 'content': interaction.user_input}
-            ]
-        )
-        full_text = response['message']['content']
-        print(f"\n[Llama 3.2]: {full_text}")
+    async def audio_stream_generator():
+        try:
+            response_stream = ollama.chat(
+                model='llama3.2:3b',
+                messages=[
+                    {'role': 'system', 'content': artifact["system_prompt"]},
+                    {'role': 'user', 'content': interaction.user_input}
+                ],
+                stream=True
+            )
 
-        # 2. Synthesize the text into a single audio chunk using Kokoro
-        generator = tts_pipeline(full_text, voice='af_bella', speed=1.0)
-        
-        # Combine all audio fragments into one single array
-        all_audio = []
-        for _, _, audio in generator:
-            all_audio.append(audio)
-            
-        import numpy as np
-        combined_audio = np.concatenate(all_audio)
+            sentence_buffer = ""
+            for chunk in response_stream:
+                text_token = chunk['message']['content']
+                sentence_buffer += text_token
+                print(text_token, end="", flush=True)
 
-        # 3. Save the file locally on Luther temporarily
-        output_filename = "temp_output.wav"
-        sf.write(output_filename, combined_audio, 24000, format='WAV')
+                if any(punc in text_token for punc in [".", "!", "?", "\n"]):
+                    sentences = re.split(r'(?<=[.!?\n])\s+', sentence_buffer)
+                    for raw_sentence in sentences[:-1]:
+                        clean_sentence = raw_sentence.strip()
+                        if len(clean_sentence) > 2:
+                            generator = tts_pipeline(clean_sentence, voice='af_bella', speed=1.0)
+                            for _, _, audio in generator:
+                                if hasattr(audio, "numpy"):
+                                    audio_array = audio.numpy()
+                                elif hasattr(audio, "cpu"):
+                                    audio_array = audio.cpu().numpy()
+                                else:
+                                    audio_array = np.array(audio)
+                                
+                                # Package this single sentence chunk inside a micro-WAV container
+                                byte_io = io.BytesIO()
+                                sf.write(byte_io, audio_array, 24000, format='WAV', subtype='PCM_16')
+                                yield byte_io.getvalue()
+                    sentence_buffer = sentences[-1]
 
-        # 4. Hand the complete file back to the phone cleanly
-        return FileResponse(output_filename, media_type="audio/wav")
+            if sentence_buffer.strip():
+                generator = tts_pipeline(sentence_buffer.strip(), voice='af_bella', speed=1.0)
+                for _, _, audio in generator:
+                    if hasattr(audio, "numpy"):
+                        audio_array = audio.numpy()
+                    elif hasattr(audio, "cpu"):
+                        audio_array = audio.cpu().numpy()
+                    else:
+                        audio_array = np.array(audio)
+                        
+                    byte_io = io.BytesIO()
+                    sf.write(byte_io, audio_array, 24000, format='WAV', subtype='PCM_16')
+                    yield byte_io.getvalue()
 
-    except Exception as e:
-        print(f"Pipeline failure: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        except Exception as e:
+            print(f"\n[Pipeline Failure]: {e}")
+            yield b""
+
+    # Use standard wav media type so mobile browsers handle the incoming segments gracefully
+    return StreamingResponse(audio_stream_generator(), media_type="audio/wav")
 
 if __name__ == "__main__":
     import uvicorn

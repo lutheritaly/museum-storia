@@ -156,37 +156,45 @@
         titleEl.textContent = "Luther sta Riflettendo...";
         promptEl.textContent = "L'artefatto sta elaborando un pensiero storico personalizzato...";
         
-        // Activate "Thinking Grid Overlay"
         document.body.classList.add('neural-bg');
         neuralContainer.style.opacity = "1";
         radarStatus.className = "w-24 h-24 rounded-full bg-amber-950/40 border border-amber-500/40 flex items-center justify-center mb-6 z-10 duration-500 filament-glow";
         micIcon.className = "h-10 w-10 text-amber-500";
         
-        // Start running background neural animation loop
         if (animationFrameId) cancelAnimationFrame(animationFrameId);
         drawNeuralNetwork(false, 1.0);
 
         try {
-            // 1. Point our global native audio player directly to Luther's endpoint
-            // Passing the payload via a standard URL avoids complex mobile header blocks
-            const audioUrl = `${API_URL}/api/interact?beacon_id=${beaconId}&user_input=${encodeURIComponent("Presentati e raccontami la tua storia.")}`;
+            // 1. Hit Luther with a standard POST request
+            const response = await fetch(`${API_URL}/api/interact`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    beacon_id: beaconId,
+                    user_input: "Presentati e raccontami la tua storia."
+                })
+            });
+
+            if (!response.ok) throw new Error("Connection dropped.");
+
+            // 2. Convert response stream to a browser-safe Audio Blob
+            const audioBlob = await response.blob();
+            const blobUrl = URL.createObjectURL(audioBlob);
             
-            // 2. Speed up the neural lights to show we are executing playback
+            // 3. Speed up neural lights to reflect active playback mode
             cancelAnimationFrame(animationFrameId);
             drawNeuralNetwork(true, 1.5);
 
             titleEl.textContent = "Il Torchio sta Parlando";
             promptEl.textContent = "Ascolta il racconto dell'artefatto secolare.";
 
-            // 3. Load and play natively via the hidden audio element
-            audioPlayer.src = audioUrl;
-            audioPlayer.load();
-            
-            // Force play inside the user-driven interaction chain
+            // 4. Feed the Object URL directly to the native audio element
+            audioPlayer.src = blobUrl;
             await audioPlayer.play();
 
-            // 4. Reset the UI automatically when the track naturally ends
             audioPlayer.onended = () => {
+                URL.revokeObjectURL(blobUrl); // Clear memory cache
+                
                 cancelAnimationFrame(animationFrameId);
                 ctx.clearRect(0, 0, canvas.width, canvas.height);
                 neuralContainer.style.opacity = "0";
@@ -199,7 +207,7 @@
             };
 
         } catch (err) {
-            console.error("UX Pipeline Error:", err);
+            console.error("Pipeline Failure:", err);
             if (animationFrameId) cancelAnimationFrame(animationFrameId);
             neuralContainer.style.opacity = "0";
             document.body.classList.remove('neural-bg');

@@ -165,7 +165,6 @@
         drawNeuralNetwork(false, 1.0);
 
         try {
-            // 1. Hit Luther with a standard POST request
             const response = await fetch(`${API_URL}/api/interact`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -175,25 +174,28 @@
                 })
             });
 
-            if (!response.ok) throw new Error("Connection dropped.");
+            if (!response.ok) throw new Error("Connection dropped by server.");
 
-            // 2. Convert response stream to a browser-safe Audio Blob
             const audioBlob = await response.blob();
             const blobUrl = URL.createObjectURL(audioBlob);
             
-            // 3. Speed up neural lights to reflect active playback mode
             cancelAnimationFrame(animationFrameId);
             drawNeuralNetwork(true, 1.5);
 
             titleEl.textContent = "Il Torchio sta Parlando";
             promptEl.textContent = "Ascolta il racconto dell'artefatto secolare.";
 
-            // 4. Feed the Object URL directly to the native audio element
-            audioPlayer.src = blobUrl;
-            await audioPlayer.play();
+            // FIXED: Create a fresh, fully independent audio pipeline in memory 
+            // This bypasses any DOM element lookup issues entirely
+            const dynamicPlayer = new Audio();
+            dynamicPlayer.src = blobUrl;
+            
+            // Mobile Safari fallback to ensure the audio context attaches cleanly
+            dynamicPlayer.load(); 
+            await dynamicPlayer.play();
 
-            audioPlayer.onended = () => {
-                URL.revokeObjectURL(blobUrl); // Clear memory cache
+            dynamicPlayer.onended = () => {
+                URL.revokeObjectURL(blobUrl); 
                 
                 cancelAnimationFrame(animationFrameId);
                 ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -207,7 +209,7 @@
             };
 
         } catch (err) {
-            console.error("Pipeline Failure:", err);
+            console.error("Pipeline Failure Details:", err);
             if (animationFrameId) cancelAnimationFrame(animationFrameId);
             neuralContainer.style.opacity = "0";
             document.body.classList.remove('neural-bg');

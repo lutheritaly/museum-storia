@@ -178,25 +178,28 @@
 
             if (!response.ok) throw new Error("Connection dropped.");
 
-            // Capture file output as an isolated system blob
-            const audioBlob = await response.blob();
-            const audioUrl = URL.createObjectURL(audioBlob);
+            // 1. Get the raw array buffer directly from Luther's response
+            const arrayBuffer = await response.arrayBuffer();
             
-            // Feed the unified container directly to native hardware layout
-            audioPlayer.src = audioUrl;
+            // 2. Decode the standard WAV file directly into the phone's native hardware mixer
+            const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            const decodedBuffer = await audioCtx.decodeAudioData(arrayBuffer);
             
-            // Speed up the neural lights to demonstrate live playback execution
+            // 3. Speed up the neural lights to demonstrate live playback execution
             cancelAnimationFrame(animationFrameId);
             drawNeuralNetwork(true, 1.5);
 
             titleEl.textContent = "Il Torchio sta Parlando";
             promptEl.textContent = "Ascolta il racconto dell'artefatto secolare.";
 
-            audioPlayer.play();
+            // 4. Create an audio source node and map it straight to the speakers
+            const source = audioCtx.createBufferSource();
+            source.buffer = decodedBuffer;
+            source.connect(audioCtx.destination);
+            source.start(0);
 
-            audioPlayer.onended = () => {
-                URL.revokeObjectURL(audioUrl); // Purge asset space
-                
+            // 5. Clean up the UI automatically when the track naturally runs out of samples
+            source.onended = () => {
                 // Return interface to a restful state
                 cancelAnimationFrame(animationFrameId);
                 ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -207,6 +210,8 @@
                 micIcon.className = "h-10 w-10 text-stone-600";
                 titleEl.textContent = "Artefatto Sintonizzato";
                 promptEl.textContent = "L'interazione è andata a buon fine. Rimani vicino per continuare.";
+                
+                audioCtx.close(); // Close the hardware audio bridge to save power
             };
 
         } catch (err) {

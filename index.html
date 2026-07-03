@@ -91,52 +91,66 @@
 
         if (!response.ok) throw new Error("Server transmission error.");
 
-        // Instead of waiting for a blob, open a live reader for the incoming chunks
-        const reader = response.body.getReader();
-        const audioChunks = [];
-        
+        // Initialize the browser's hidden hardware audio mixer context
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext({ sampleRate: 24000 });
+        let startTime = audioCtx.currentTime;
+
         titleEl.textContent = "Ascolto in Corso...";
         promptEl.textContent = "L'artefatto sta parlando direttamente sul tuo dispositivo.";
 
-        // Read the stream sequentially
-        let done = false;
-        while (!done) {
-            const { value, done: readerDone } = await reader.read();
-            if (value) {
-                audioChunks.push(value);
-                
-                // As soon as we get our initial sentence chunks, assemble them so the user can start listening immediately
-                if (audioChunks.length === 1 || audioChunks.length % 3 === 0) {
-                    const tempBlob = new Blob(audioChunks, { type: 'audio/wav' });
-                    const currentPlayTime = audioPlayer.currentTime;
-                    const isPlaying = !audioPlayer.paused;
-                    
-                    audioPlayer.src = URL.createObjectURL(tempBlob);
-                    
-                    if (isPlaying) {
-                        audioPlayer.currentTime = currentPlayTime;
-                        audioPlayer.play();
-                    } else if (audioChunks.length === 1) {
-                        audioPlayer.play();
-                    }
+        const reader = response.body.getReader();
+        let leftoverBytes = new Uint8Array(0);
+
+        while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+
+            // Combine any leftover bytes from the last chunk with the incoming data payload
+            const combinedBytes = new Uint8Array(leftoverBytes.length + value.length);
+            combinedBytes.set(leftoverBytes);
+            combinedBytes.set(value, leftoverBytes.length);
+
+            // 16-bit PCM means every single audio sample is exactly 2 bytes long
+            const validLength = Math.floor(combinedBytes.length / 2) * 2;
+            const pcmData = new Uint8Array(combinedBytes.buffer, 0, validLength);
+            leftoverBytes = new Uint8Array(combinedBytes.buffer, validLength);
+
+            if (pcmData.length > 0) {
+                const sampleCount = pcmData.length / 2;
+                const float32Array = new Float32Array(sampleCount);
+                const dataView = new DataView(pcmData.buffer, pcmData.byteOffset, pcmData.byteLength);
+
+                // Convert 16-bit integers back into float values (-1.0 to 1.0) for the phone's speakers
+                for (let i = 0; i < sampleCount; i++) {
+                    const int16Sample = dataView.getInt16(i * 2, true); // true = little-endian
+                    float32Array[i] = int16Sample / 32768.0;
                 }
+
+                // Create an execution buffer inside the mobile device memory
+                const audioBuffer = audioCtx.createBuffer(1, sampleCount, 24000);
+                audioBuffer.getChannelData(0).set(float32Array);
+
+                // Schedule this micro-chunk to play immediately following the previous chunk
+                const bufferSource = audioCtx.createBufferSource();
+                bufferSource.buffer = audioBuffer;
+                bufferSource.connect(audioCtx.destination);
+                
+                // If the engine fell behind, lock the start time to the current clock tracking loop
+                if (startTime < audioCtx.currentTime) {
+                    startTime = audioCtx.currentTime;
+                }
+                
+                bufferSource.start(startTime);
+                startTime += audioBuffer.duration; // Line up the next chunk precisely at the tail end
             }
-            done = readerDone;
         }
 
-        // Final assembly of the complete narration
-        const finalBlob = new Blob(audioChunks, { type: 'audio/wav' });
-        const finalUrl = URL.createObjectURL(finalBlob);
-        const savedTime = audioPlayer.currentTime;
-        
-        audioPlayer.src = finalUrl;
-        audioPlayer.currentTime = savedTime;
-        if (!audioPlayer.ended) audioPlayer.play();
-
-        audioPlayer.onended = () => {
+        // Reset the UI headings once the stream reader closes cleanly
+        setTimeout(() => {
             titleEl.textContent = "Artefatto Sintonizzato";
             promptEl.textContent = "Rimani vicino all'oggetto per interagire ancora o spostati per ascoltarne un altro.";
-        };
+        }, ((startTime - audioCtx.currentTime) * 1000) + 500);
 
     } catch (err) {
         console.error("Pipeline breakdown:", err);

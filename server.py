@@ -106,6 +106,10 @@ import numpy as np
 import io
 import soundfile as sf
 
+from fastapi.responses import StreamingResponse
+import re
+import numpy as np
+
 @app.post("/api/interact")
 @app.post("/api/interact/")
 async def interact(interaction: TourInteraction):
@@ -144,10 +148,9 @@ async def interact(interaction: TourInteraction):
                                 else:
                                     audio_array = np.array(audio)
                                 
-                                # Package this single sentence chunk inside a micro-WAV container
-                                byte_io = io.BytesIO()
-                                sf.write(byte_io, audio_array, 24000, format='WAV', subtype='PCM_16')
-                                yield byte_io.getvalue()
+                                # Convert the float32 array to raw 16-bit signed PCM bytes
+                                pcm_bytes = (audio_array * 32767).astype(np.int16).tobytes()
+                                yield pcm_bytes
                     sentence_buffer = sentences[-1]
 
             if sentence_buffer.strip():
@@ -160,16 +163,15 @@ async def interact(interaction: TourInteraction):
                     else:
                         audio_array = np.array(audio)
                         
-                    byte_io = io.BytesIO()
-                    sf.write(byte_io, audio_array, 24000, format='WAV', subtype='PCM_16')
-                    yield byte_io.getvalue()
+                    pcm_bytes = (audio_array * 32767).astype(np.int16).tobytes()
+                    yield pcm_bytes
 
         except Exception as e:
             print(f"\n[Pipeline Failure]: {e}")
             yield b""
 
-    # Use standard wav media type so mobile browsers handle the incoming segments gracefully
-    return StreamingResponse(audio_stream_generator(), media_type="audio/wav")
+    # Return raw binary data stream
+    return StreamingResponse(audio_stream_generator(), media_type="application/octet-stream")
 
 if __name__ == "__main__":
     import uvicorn

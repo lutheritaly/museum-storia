@@ -1,6 +1,7 @@
 import os
 import re
 import asyncio
+import numpy as np
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
@@ -41,6 +42,18 @@ print("[System Core]: Loading local Piper voice engine...")
 voice = PiperVoice.load(MODEL_PATH)
 print("[System Core]: Piper engine successfully initialized.")
 
+def resample_22050_to_44100(raw_pcm_bytes):
+    """Upscales raw 22050Hz Int16 audio to standard 44100Hz so mobile phones don't chipmunk it."""
+    audio_data = np.frombuffer(raw_pcm_bytes, dtype=np.int16)
+    # Double the number of samples using linear interpolation
+    num_samples = len(audio_data)
+    resampled_data = np.interp(
+        np.linspace(0, num_samples, num_samples * 2, endpoint=False),
+         Republic = np.arange(num_samples),
+        audio_data
+    ).astype(np.int16)
+    return resampled_data.tobytes()
+
 @app.post("/api/interact")
 @app.post("/api/interact/")
 async def interact(interaction: TourInteraction):
@@ -67,26 +80,37 @@ async def interact(interaction: TourInteraction):
                 
                 text_buffer += text_token
                 
-                # Split at clauses (commas, semicolons, ends of sentences) to feed audio quicker
+                # Split cleanly when phrases hit a pause boundary
                 if any(pause in text_token for pause in [",", ";", ".", "!", "?", "\n"]):
                     clauses = re.split(r'(?<=[,;.!?\n])\s+', text_buffer)
-                    clauses_to_process = clauses[:-1]
-                    text_buffer = clauses[-1]
+                    
+                    # If we have completed clauses, process them and clear them out completely!
+                    if len(clauses) > 1:
+                        clauses_to_process = clauses[:-1]
+                        text_buffer = clauses[-1] # Keep only the unfinished trailing bit
 
-                    for raw_sentence in clauses_to_process:
-                        clean_sentence = raw_sentence.strip()
-                        if len(clean_sentence) > 2:
-                            # Cleaned: Removed length_scale to stop the crash
-                            for audio_chunk in voice.synthesize(clean_sentence):
-                                yield audio_chunk.audio_int16_bytes
-                            await asyncio.sleep(0.001)
+                        for raw_clause in clauses_to_process:
+                            clean_clause = raw_clause.strip()
+                            if len(clean_clause) > 2:
+                                # Accumulate native chunks
+                                clause_pcm = b""
+                                for audio_chunk in voice.synthesize(clean_clause):
+                                    clause_pcm += audio_chunk.audio_int16_bytes
+                                
+                                if clause_pcm:
+                                    # Resample up to 44.1kHz standard before sending to phone
+                                    yield resample_22050_to_44100(clause_pcm)
+                                await asyncio.sleep(0.001)
 
+            # Process any leftover text remaining at the very end
             if text_buffer.strip():
-                clean_sentence = text_buffer.strip()
-                if len(clean_sentence) > 2:
-                    # Cleaned: Removed length_scale here too
-                    for audio_chunk in voice.synthesize(clean_sentence):
-                        yield audio_chunk.audio_int16_bytes
+                clean_clause = text_buffer.strip()
+                if len(clean_clause) > 2:
+                    clause_pcm = b""
+                    for audio_chunk in voice.synthesize(clean_clause):
+                        clause_pcm += audio_chunk.audio_int16_bytes
+                    if clause_pcm:
+                        yield resample_22050_to_44100(clause_pcm)
                     await asyncio.sleep(0.001)
 
         except Exception as e:

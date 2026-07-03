@@ -105,7 +105,7 @@
                     const int16Array = new Int16Array(value.buffer, value.byteOffset, value.byteLength / 2);
                     
                     // Force browser mixer to handle the translation from native 22050Hz upward
-                    const audioBuffer = audioCtx.createBuffer(1, int16Array.length, 22050);
+                    const audioBuffer = audioCtx.createBuffer(1, int16Array.length, 44100);
                     const channelData = audioBuffer.getChannelData(0);
                     
                     for (let i = 0; i < int16Array.length; i++) {
